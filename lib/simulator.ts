@@ -12,7 +12,7 @@ import { SAMPLE_MS, SIGNAL_IDS, SignalId, SIGNAL_META } from './signals';
 export const CYCLE_MS = 600_000;
 const LOAD_AT = 150_000, LOAD_RAMP = 15_000, LOAD_HOLD = 60_000;
 const COBBLE_AT = 420_000;
-export const COBBLE_MS = 3_000;
+export const COBBLE_MS = 5_000;
 const MILL_OFFSET: Record<string, number> = { 'RM-01': 0, 'RM-02': 200_000 };
 
 export type ManualEvent = { kind: 'cobble'; startMs: number };

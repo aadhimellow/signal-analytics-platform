@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import SignalChart from '@/components/SignalChart';
+import DigitalTwin from '@/components/DigitalTwin';
 import { SIGNALS } from '@/lib/signals';
 
 const MILL_IDS = ['RM-01', 'RM-02'];
@@ -36,11 +37,14 @@ export default function Live() {
         <span style={{ flex: 1 }} /><button className="danger" onClick={inject}>Inject cobble</button>
       </div>
       {msg && <div className="card" style={{ marginBottom: '1rem' }}>{msg}</div>}
-      <div className="grid g6" style={{ marginBottom: '1rem' }}>
-        {SIGNALS.map((s) => (
-          <div key={s.id} className="card kpi"><div className="l">{s.label}</div>
-            <div><span className="v" style={{ color: s.color }}>{d?.latest?.[s.id] !== undefined ? Number(d.latest[s.id]).toFixed(s.id === 'motor_speed' || s.id === 'rolling_force' ? 0 : 1) : '–'}</span><span className="u">{s.unit}</span></div></div>
-        ))}
+      <div className="twinrow">
+        <div className="card"><DigitalTwin values={d?.latest ?? {}} title={`${mill} · 4-high roughing stand`} /></div>
+        <div className="grid g6" style={{ alignContent: 'start' }}>
+          {SIGNALS.map((s) => (
+            <div key={s.id} className="card kpi"><div className="l">{s.label}</div>
+              <div><span className="v" style={{ color: s.color }}>{d?.latest?.[s.id] !== undefined ? Number(d.latest[s.id]).toFixed(s.id === 'motor_speed' || s.id === 'rolling_force' ? 0 : 1) : '–'}</span><span className="u">{s.unit}</span></div></div>
+          ))}
+        </div>
       </div>
       <div className="chips" style={{ marginBottom: '.8rem' }}>
         {SIGNALS.map((s) => <span key={s.id} className={`chip ${sel.includes(s.id) ? 'on' : ''}`} onClick={() => setSel(sel.includes(s.id) ? sel.filter((x) => x !== s.id) : [...sel, s.id])}>{s.label}</span>)}

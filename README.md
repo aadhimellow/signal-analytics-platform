@@ -8,6 +8,12 @@ Full-stack monitoring platform for a steel **rolling mill**: a virtual PLC emits
 | **Demo login** | `demo@monoedge.dev` / `Demo@12345` (or sign up) |
 | **Stack** | Next.js 14 (App Router, TypeScript) · PostgreSQL (Neon) · JWT cookie auth · Recharts · Vercel |
 
+## Highlights
+
+- **Live digital twin** of a 4-high stand (Live page): roll rotation follows motor speed, force arrows follow rolling force, the housing shakes with vibration, and the strip turns into a buckled loop when the *data* shows a cobble. The phase badge (stable / heavy pass / cobble) is derived from signal values only, never from a scenario flag; the real alert always comes from the detector.
+- **20 ms frame scrubber** (Incident page): scrub, step ±20 ms, play at 0.1x-4x or jump to the peak through the *real stored raw samples* around an alert (~500 frames, served by `/api/alerts/[id]/frames`). The twin, the signal-by-signal table (normal mean ± σ vs this frame) and the % change strip all follow the selected frame.
+- Real auth, idempotent ingestion, 1 s rollups, explainable alerts, history with normal-vs-abnormal comparison.
+
 ## Quick start (local)
 
 ```bash
@@ -93,6 +99,7 @@ A **hybrid of statistics and domain rules**, deliberately explainable for plant 
 
 ```
 app/                 pages (Live, History, Alerts, Alerts/[id], Login) + API routes
+components/          DigitalTwin.tsx · FrameScrubber.tsx · SignalChart.tsx
   api/{live,history,alerts,ingest,scenario,auth}/
 lib/simulator.ts     deterministic virtual PLC     lib/detector.ts   pure anomaly detection
 lib/engine.ts        ingest, rollups, alerts, embedded sim driver, retention

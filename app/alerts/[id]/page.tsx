@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import SignalChart from '@/components/SignalChart';
+import FrameScrubber from '@/components/FrameScrubber';
 import { SIGNALS } from '@/lib/signals';
 import { CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
@@ -26,6 +27,8 @@ export default function Incident({ params }: { params: { id: string } }) {
         <div><b>Triggered:</b> {new Date(a.start_ts).toLocaleString()} → {new Date(a.end_ts).toLocaleTimeString()} ({((e - s) / 1000).toFixed(1)} s) · <b>Score:</b> {a.score.toFixed(0)}</div>
         <div><b>Affected signals:</b> {a.signals.join(', ')}</div><div style={{ marginTop: 6 }}><b>Why:</b> {a.reason}</div>
       </div>
+      <h3>20 ms frame scrubber <span className="muted" style={{ fontSize: 12 }}>(real stored samples · digital twin follows the selected frame)</span></h3>
+      <div style={{ marginBottom: '1rem' }}><FrameScrubber alertId={a.id} /></div>
       <h3>Normal vs incident</h3>
       <div className="card" style={{ marginBottom: '1rem' }}><table>
         <thead><tr><th>Signal</th><th>Normal (30 s before) mean ± σ</th><th>Incident extreme</th><th>Change</th><th>Deviation</th></tr></thead>

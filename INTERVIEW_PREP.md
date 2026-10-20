@@ -21,10 +21,15 @@
 7. **What's the detection latency / precision?** ~1.2 s; 0 false positives on seeded normal + load change; honest caveat: synthetic data.
 8. **Security?** Middleware-enforced auth, bcrypt, httpOnly JWT, API key for ingest, parameterised SQL. Gaps: no rate limiting / refresh tokens / RBAC yet.
 
+## Questions about the twin and scrubber
+- **Is the twin hard-coded to the scenario?** No. `phaseOf()` uses only signal ratios vs nominal (current & torque > 1.5x with speed < 0.92x or vibration > 1.5x = cobble), so it works for any producer, including the real ingest API. It is a visualisation; alerts come from the detector.
+- **Where do the scrubber frames come from?** Raw 20 ms rows in Postgres around the alert. Retention keeps +-60 s around every alert, so the incident can always be replayed even after the 1 h raw retention purges everything else.
+- **Why is scrubbing smooth at 50 fps?** The 6x500-point chart is memoised SVG; only the cursor, the table and the twin re-render per frame, and playback runs on requestAnimationFrame.
+
 ## Demo script (3 minutes)
 1. Login -> Live: point out 50 Hz source / downsampled charts, status badge.
 2. Click **Inject cobble** -> status turns ALARM within ~2-3 s; open the alert.
-3. Incident page: normal-vs-incident table, % change overlay, red band on each chart.
+3. Incident page: scrub the 20 ms frames (use Peak, then step +-20 ms) and watch the twin buckle and the table go red; then the normal-vs-incident table and per-signal charts.
 4. History: pick last 15 min, show normal vs abnormal summary.
 5. Mention the load change at +150 s that did **not** alert, and show it in History.
 6. Terminal: `npm run simulate -- --replay-from ...` to show the same incident via the ingest API.

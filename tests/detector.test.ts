@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generate, cobbleStartsBetween, CYCLE_MS } from '../lib/simulator';
 import { detect, WINDOW_MS, WindowSeries } from '../lib/detector';
-import { SIGNAL_IDS } from '../lib/signals';
+import { SIGNAL_IDS, phaseOf } from '../lib/signals';
+import { sample } from '../lib/simulator';
 
 function windows(mill: string, fromMs: number, toMs: number, manual = []) {
   const rows = generate(mill, fromMs, toMs, manual);
@@ -42,4 +43,11 @@ test('operator-injected cobble is detected', () => {
 });
 test('scheduled cobble list', () => {
   assert.equal(cobbleStartsBetween('RM-01', T0, T0 + CYCLE_MS)[0], T0 + 420_000);
+});
+
+test('twin phase is derived from values: stable -> heavy (load change) -> cobble', () => {
+  assert.equal(phaseOf(sample('RM-01', T0 + 10_000)), 'stable');
+  assert.equal(phaseOf(sample('RM-01', T0 + 200_000)), 'heavy');        // inside the +20 % load-change hold
+  assert.equal(phaseOf(sample('RM-01', T0 + 421_500)), 'cobble');       // mid-cobble
+  assert.equal(phaseOf(sample('RM-02', T0 + 200_000 + 0)), 'stable');   // RM-02 is offset, not in load change here
 });
