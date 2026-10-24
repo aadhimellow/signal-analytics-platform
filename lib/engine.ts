@@ -1,6 +1,6 @@
 /** Ingestion -> rollups -> anomaly detection -> alert persistence, plus the embedded virtual-PLC driver. */
 import { pool, q } from './db';
-import { Reading, generate, ManualEvent } from './simulator';
+import { Reading, generate, ManualEvent, PRE_MS } from './simulator';
 import { detect, WINDOW_MS, WindowSeries, DetectedIncident } from './detector';
 import { MILLS, SIGNAL_IDS, SignalId } from './signals';
 
@@ -56,22 +56,40 @@ export async function detectRange(mill: string, fromMs: number, toMs: number): P
   return saved;
 }
 
+/** For a cobble, look back 60 s for a precursor warning on the same mill and record the lead time. */
+async function withLead(mill: string, inc: DetectedIncident, startMs: number) {
+  let reason = inc.reason; const details: any = { ...inc.details };
+  if (inc.kind === 'cobble_signature') {
+    const [pre] = await q<{ id: number; start_ts: Date }>(
+      `SELECT id,start_ts FROM alerts WHERE mill_id=$1 AND kind='cobble_precursor' AND start_ts<=$2 AND start_ts>=$3 ORDER BY start_ts DESC LIMIT 1`,
+      [mill, new Date(startMs), new Date(startMs - 60_000)]);
+    if (pre) {
+      const lead = (startMs - pre.start_ts.getTime()) / 1000;
+      details._lead = { precursor_alert_id: pre.id, lead_time_s: +lead.toFixed(1) };
+      reason += ` Early warning (alert #${pre.id}) fired ${lead.toFixed(1)} s earlier.`;
+    }
+  }
+  return { reason, details };
+}
+
 /** Insert an alert, or extend an existing one for the same mill/kind/signals that overlaps or is within 10 s. */
 async function saveIncident(mill: string, inc: DetectedIncident, startMs: number, endMs: number): Promise<number> {
-  const [ex] = await q<{ id: number }>(
-    `SELECT id FROM alerts WHERE mill_id=$1 AND kind=$2 AND signals && $3::text[] AND start_ts <= $5 AND end_ts >= $4 ORDER BY id LIMIT 1`,
+  const [ex] = await q<{ id: number; start_ts: Date }>(
+    `SELECT id, start_ts FROM alerts WHERE mill_id=$1 AND kind=$2 AND signals && $3::text[] AND start_ts <= $5 AND end_ts >= $4 ORDER BY id LIMIT 1`,
     [mill, inc.kind, inc.signals, new Date(startMs - 10_000), new Date(endMs + 10_000)],
   );
   if (ex) {
+    const { reason, details } = await withLead(mill, inc, Math.min(startMs, ex.start_ts.getTime()));
     await pool.query(
       `UPDATE alerts SET start_ts=LEAST(start_ts,$2), end_ts=GREATEST(end_ts,$3), score=GREATEST(score,$4), details=$5, reason=$6 WHERE id=$1`,
-      [ex.id, new Date(startMs), new Date(endMs), inc.score, JSON.stringify(inc.details), inc.reason],
+      [ex.id, new Date(startMs), new Date(endMs), inc.score, JSON.stringify(details), reason],
     );
     return 0;
   }
+  const { reason, details } = await withLead(mill, inc, startMs);
   await pool.query(
     `INSERT INTO alerts(mill_id,kind,severity,start_ts,end_ts,signals,reason,score,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [mill, inc.kind, inc.severity, new Date(startMs), new Date(endMs), inc.signals, inc.reason, inc.score, JSON.stringify(inc.details)],
+    [mill, inc.kind, inc.severity, new Date(startMs), new Date(endMs), inc.signals, reason, inc.score, JSON.stringify(details)],
   );
   return 1;
 }
@@ -94,8 +112,13 @@ export async function ingestBatch(rows: Reading[]) {
 const MAX_CATCHUP_MS = 120_000;
 
 async function manualEvents(mill: string, fromMs: number, toMs: number): Promise<ManualEvent[]> {
-  const rows = await q<{ start_ts: Date }>(`SELECT start_ts FROM scenario_events WHERE mill_id=$1 AND kind='cobble' AND start_ts>=$2 AND start_ts<$3`, [mill, new Date(fromMs - 5000), new Date(toMs)]);
-  return rows.map((r) => ({ kind: 'cobble', startMs: r.start_ts.getTime() }));
+  const rows = await q<{ start_ts: Date; kind: string }>(`SELECT start_ts, kind FROM scenario_events WHERE mill_id=$1 AND start_ts>=$2 AND start_ts<$3`, [mill, new Date(fromMs - 30_000), new Date(toMs)]);
+  return rows.flatMap((r): ManualEvent[] => {
+    const t = r.start_ts.getTime();
+    if (r.kind === 'precursor') return [{ kind: 'precursor', startMs: t, fade: true }];            // near miss
+    if (r.kind === 'escalation') return [{ kind: 'precursor', startMs: t, fade: false }, { kind: 'cobble', startMs: t + PRE_MS }];
+    return [{ kind: 'cobble', startMs: t }];
+  });
 }
 
 /**

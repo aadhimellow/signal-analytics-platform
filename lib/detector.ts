@@ -8,7 +8,10 @@
  *  Rule A  COBBLE SIGNATURE (critical): current z>=4 AND torque z>=4 AND (speed z<=-3 OR vibration z>=5)
  *          AND >=3 signals with |z|>=4, persisting >=2 windows. A legitimate load change moves speed UP together with
  *          current/torque, slowly, so it never satisfies the "surge with speed collapse / vibration burst" shape.
- *  Rule B  SINGLE-SIGNAL OUTLIER (warning): any signal |z|>=8 for >=4 consecutive windows that Rule A did not explain.
+ *  Rule C  COBBLE PRECURSOR (warning): vibration z>=5 AND torque z>=2 AND speed z<=-1 (sagging, never rising) with NO
+ *          current surge (that would be Rule A), persisting >=5 windows (1 s). Early roll slip / chatter = lead time.
+ *  Rule B  SINGLE-SIGNAL OUTLIER (warning): one signal |z|>=8 for >=4 consecutive windows while every other signal stays within |z|<2
+ *          (isolated = sensor fault / local excursion; multi-signal patterns belong to Rules A and C).
  */
 import { SIGNAL_META, SignalId } from './signals';
 
@@ -18,7 +21,7 @@ const MIN_HISTORY = 56;
 
 export type WindowSeries = Record<SignalId, number[]>; // aligned arrays of window means
 export type DetectedIncident = {
-  kind: 'cobble_signature' | 'signal_outlier';
+  kind: 'cobble_signature' | 'cobble_precursor' | 'signal_outlier';
   severity: 'critical' | 'warning';
   startIdx: number; endIdx: number; // inclusive window indexes
   signals: SignalId[]; score: number; reason: string;
@@ -71,7 +74,7 @@ export function detect(w: WindowSeries): DetectedIncident[] {
   const covered = new Set<number>();
   for (const [s, e] of runs(flagA, 4)) {
     if (e - s + 1 < 2) continue;
-    for (let k = s; k <= e; k++) covered.add(k);
+    for (let k = Math.max(0, s - 10); k <= Math.min(n - 1, e + 10); k++) covered.add(k);
     const details: DetectedIncident['details'] = {}; const sig: SignalId[] = [];
     for (const id of ids) {
       let pk = 0, pz = 0, b = 0;
@@ -88,9 +91,31 @@ export function detect(w: WindowSeries): DetectedIncident[] {
       details,
     });
   }
+  // Rule C
+  const flagC = Array.from({ length: n }, (_, k) =>
+    k >= MIN_HISTORY && !flagA[k] && zz('vibration', k) >= 5 && zz('torque', k) >= 2 && zz('motor_speed', k) <= -1);
+  for (const [s, e] of runs(flagC, 2)) {
+    if (e - s + 1 < 5) continue;
+    for (let k = Math.max(0, s - 25); k <= Math.min(n - 1, e + 10); k++) covered.add(k); // vibration crosses its threshold ~1-2 s before Rule C can confirm; keep Rule B quiet
+    const details: DetectedIncident['details'] = {}; const sig: SignalId[] = [];
+    for (const id of ids) {
+      let pk = 0, pz = 0, b = 0;
+      for (let k = s; k <= e; k++) if (Math.abs(zz(id, k)) > Math.abs(pz)) { pz = zz(id, k); pk = w[id][k]; b = Z[id].base[k]; }
+      if (['vibration', 'torque', 'motor_speed'].includes(id)) sig.push(id);
+      details[id] = { peak: pk, baseline: b, pct: b ? ((pk - b) / b) * 100 : 0, z: pz };
+    }
+    incidents.push({
+      kind: 'cobble_precursor', severity: 'warning', startIdx: s, endIdx: e, signals: sig,
+      score: Math.min(100, Math.abs(details.vibration.z)),
+      reason: `Possible cobble developing: vibration x${(1 + details.vibration.pct / 100).toFixed(1)}, torque ${details.torque.pct >= 0 ? '+' : ''}${details.torque.pct.toFixed(0)}%, ` +
+        `speed ${details.motor_speed.pct >= 0 ? '+' : ''}${details.motor_speed.pct.toFixed(0)}% vs 10 s baseline with no current surge - early roll slip / chatter pattern. Inspect the stand before it jams.`,
+      details,
+    });
+  }
   // Rule B
   for (const id of ids) {
-    const flags = Array.from({ length: n }, (_, k) => Math.abs(zz(id, k)) >= 8 && !covered.has(k));
+    // genuinely isolated: no other signal is already moving (|z|>=2), otherwise it belongs to a multi-signal pattern (Rules A/C)
+    const flags = Array.from({ length: n }, (_, k) => Math.abs(zz(id, k)) >= 8 && !covered.has(k) && !ids.some((o) => o !== id && Math.abs(zz(o, k)) >= 2));
     for (const [s, e] of runs(flags, 2)) {
       if (e - s + 1 < 4) continue;
       let pz = 0, pk = 0, b = 0;

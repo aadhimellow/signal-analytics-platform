@@ -2,7 +2,7 @@
 import { NOMINAL, Phase, phaseOf } from '@/lib/signals';
 
 type V = Partial<Record<string, number>>;
-const PHASE_LABEL: Record<Phase, string> = { stable: 'Pass stable', heavy: 'Heavy pass · legitimate load change', cobble: 'COBBLE · material jam' };
+const PHASE_LABEL: Record<Phase, string> = { stable: 'Pass stable', heavy: 'Heavy pass · legitimate load change', precursor: 'PRECURSOR · roll slip / chatter', cobble: 'COBBLE · material jam' };
 
 /**
  * Schematic of a 4-high rolling stand driven purely by signal values:
@@ -17,7 +17,7 @@ export default function DigitalTwin({ values, title, animate = true }: { values:
   const dur = Math.min(12, Math.max(0.8, (2.4 * NOMINAL.motor_speed) / Math.max(v('motor_speed'), 60)));
   const force = Math.min(1.1, Math.max(0.5, ratio('rolling_force') / 2));           // arrow length 0..1
   const forceColor = ratio('rolling_force') > 1.4 ? '#ff4d5e' : ratio('rolling_force') > 1.12 ? '#f5a524' : '#38bdf8';
-  const shake = v('vibration') > 5 ? 'shake-h' : v('vibration') > 3 ? 'shake-s' : '';
+  const shake = v('vibration') > 8 ? 'shake-h' : v('vibration') > 3 ? 'shake-s' : '';
   const run = animate ? 'running' : 'paused';
   const roll = (cx: number, cy: number, r: number, ccw: boolean, stroke: string, cross: number) => (
     <g className={`roll ${ccw ? 'ccw' : ''}`} style={{ ['--dur' as any]: `${dur}s`, animationPlayState: run }}>
@@ -29,7 +29,7 @@ export default function DigitalTwin({ values, title, animate = true }: { values:
       <text x={x} y={y} fill="#8b9bb0" fontSize={8.5} textAnchor={anchor}>{label}</text>
       <text x={x} y={y + 13} fill={bad ? '#ff4d5e' : '#e6edf5'} fontSize={12.5} fontWeight={700} textAnchor={anchor} className={bad ? 'blink' : ''}>{val}</text>
     </g>);
-  const rim = phase === 'cobble' ? '#ff4d5e' : phase === 'heavy' ? '#f5a524' : '#a8f1dc';
+  const rim = phase === 'cobble' ? '#ff4d5e' : phase === 'heavy' || phase === 'precursor' ? '#f5a524' : '#a8f1dc';
   return (
     <div>
       <div className="row" style={{ marginBottom: '.5rem', justifyContent: 'space-between' }}>
@@ -65,7 +65,7 @@ export default function DigitalTwin({ values, title, animate = true }: { values:
           {tag(12, 150, 'MOTOR CURRENT', `${v('motor_current').toFixed(0)} A`, ratio('motor_current') > 1.5)}
           {tag(12, 180, 'TORQUE', `${v('torque').toFixed(1)} kNm`, ratio('torque') > 1.5)}
           {tag(508, 14, 'ROLLING FORCE', `${v('rolling_force').toFixed(0)} kN`, ratio('rolling_force') > 1.4, 'end')}
-          {tag(508, 150, 'VIBRATION', `${v('vibration').toFixed(1)} mm/s`, v('vibration') > 4, 'end')}
+          {tag(508, 150, 'VIBRATION', `${v('vibration').toFixed(1)} mm/s`, v('vibration') > 3.8, 'end')}
           {tag(508, 180, 'TEMPERATURE', `${v('temperature').toFixed(0)} °C`, false, 'end')}
         </svg>
       </div>

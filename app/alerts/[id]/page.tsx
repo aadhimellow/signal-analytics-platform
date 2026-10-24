@@ -25,7 +25,8 @@ export default function Incident({ params }: { params: { id: string } }) {
         <span className="muted">status: {a.status}</span>{a.status === 'open' && <button onClick={ack}>Acknowledge</button>}</div>
       <div className="card" style={{ marginBottom: '1rem' }}>
         <div><b>Triggered:</b> {new Date(a.start_ts).toLocaleString()} → {new Date(a.end_ts).toLocaleTimeString()} ({((e - s) / 1000).toFixed(1)} s) · <b>Score:</b> {a.score.toFixed(0)}</div>
-        <div><b>Affected signals:</b> {a.signals.join(', ')}</div><div style={{ marginTop: 6 }}><b>Why:</b> {a.reason}</div>
+        <div><b>Affected signals:</b> {a.signals.join(', ')}</div>
+        {a.details?._lead && <div><b>Lead time:</b> early warning <Link href={`/alerts/${a.details._lead.precursor_alert_id}`}>#{a.details._lead.precursor_alert_id}</Link> fired {a.details._lead.lead_time_s} s before the jam.</div>}<div style={{ marginTop: 6 }}><b>Why:</b> {a.reason}</div>
       </div>
       <h3>20 ms frame scrubber <span className="muted" style={{ fontSize: 12 }}>(real stored samples · digital twin follows the selected frame)</span></h3>
       <div style={{ marginBottom: '1rem' }}><FrameScrubber alertId={a.id} /></div>

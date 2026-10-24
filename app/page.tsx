@@ -22,9 +22,10 @@ export default function Live() {
   }, [mill, secs]);
 
   const areas = (d?.alerts ?? []).map((a: any) => ({ from: new Date(a.start_ts).getTime(), to: new Date(a.end_ts).getTime() }));
-  async function inject() {
-    const r = await fetch('/api/scenario', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mill }) });
-    const j = await r.json(); setMsg(r.ok ? `Cobble scheduled for ${new Date(j.startsAt).toLocaleTimeString()} - watch the charts.` : j.error);
+  const WHAT: Record<string, string> = { precursor: 'Precursor (near miss, ~12 s)', cobble: 'Cobble (3 s)', escalation: 'Precursor → cobble (~15 s)' };
+  async function inject(kind: 'precursor' | 'cobble' | 'escalation') {
+    const r = await fetch('/api/scenario', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mill, kind }) });
+    const j = await r.json(); setMsg(r.ok ? `${WHAT[kind]} scheduled for ${new Date(j.startsAt).toLocaleTimeString()} on ${mill} - watch the twin and charts.` : j.error);
   }
   return (
     <>
@@ -34,7 +35,9 @@ export default function Live() {
         <select value={secs} onChange={(e) => setSecs(+e.target.value)}>{[30, 60, 120, 300].map((s) => <option key={s} value={s}>last {s}s</option>)}</select>
         <span className={`badge ${d?.status ?? 'STALE'}`}>{d?.status === 'NORMAL' && <span className="pulse" />}{d?.status ?? 'CONNECTING'}</span>
         <span className="muted">{d?.lastTs ? `last sample ${new Date(d.lastTs).toLocaleTimeString()} · 50 Hz source, charts downsampled to ${d.bucketMs} ms` : ''}</span>
-        <span style={{ flex: 1 }} /><button className="danger" onClick={inject}>Inject cobble</button>
+        <span style={{ flex: 1 }} /><button onClick={() => inject('precursor')} style={{ borderColor: 'var(--warn)', color: 'var(--warn)' }}>Inject precursor</button>
+        <button className="danger" onClick={() => inject('cobble')}>Inject cobble</button>
+        <button onClick={() => inject('escalation')} style={{ borderColor: 'var(--crit)' }}>Precursor → cobble</button>
       </div>
       {msg && <div className="card" style={{ marginBottom: '1rem' }}>{msg}</div>}
       <div className="twinrow">

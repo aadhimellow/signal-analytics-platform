@@ -15,7 +15,8 @@ const COBBLE_AT = 420_000;
 export const COBBLE_MS = 5_000;
 const MILL_OFFSET: Record<string, number> = { 'RM-01': 0, 'RM-02': 200_000 };
 
-export type ManualEvent = { kind: 'cobble'; startMs: number };
+export const PRE_MS = 12_000; // precursor builds for 12 s before the jam
+export type ManualEvent = { kind: 'cobble' | 'precursor'; startMs: number; fade?: boolean };
 
 // --- tiny deterministic PRNG: hash(index, salt) -> N(0,1) ----------------------------------------------------
 function hash(a: number, b: number): number {
@@ -45,8 +46,27 @@ function cobbleAge(mill: string, tMs: number, manual: ManualEvent[]): number | n
   const off = MILL_OFFSET[mill] ?? 0;
   const c = (((tMs + off) % CYCLE_MS) + CYCLE_MS) % CYCLE_MS;
   if (c >= COBBLE_AT && c < COBBLE_AT + COBBLE_MS) return (c - COBBLE_AT) / 1000;
-  for (const e of manual) if (tMs >= e.startMs && tMs < e.startMs + COBBLE_MS) return (tMs - e.startMs) / 1000;
+  for (const e of manual) if (e.kind === 'cobble' && tMs >= e.startMs && tMs < e.startMs + COBBLE_MS) return (tMs - e.startMs) / 1000;
   return null;
+}
+
+/**
+ * PRECURSOR (early roll slip / chatter), intensity 0..1. Ramps up over 6 s then holds.
+ *  fade=true  -> stand-alone "near miss": holds until 75 % of PRE_MS, then recovers.
+ *  fade=false -> escalation: holds through the cobble that follows, then eases off over 2 s (no dip at cobble onset).
+ * Scheduled every cycle just before the cobble (lead time = PRE_MS).
+ */
+function precursorLevel(mill: string, tMs: number, manual: ManualEvent[]): number {
+  const off = MILL_OFFSET[mill] ?? 0;
+  const c = (((tMs + off) % CYCLE_MS) + CYCLE_MS) % CYCLE_MS;
+  const lvl = (age: number, fade: boolean) => {
+    const hold = fade ? PRE_MS * 0.75 : PRE_MS + COBBLE_MS, fall = fade ? PRE_MS * 0.25 : 2000;
+    if (age < 0 || age >= hold + fall) return 0;
+    return Math.min(smooth(age / (PRE_MS * 0.5)), age < hold ? 1 : 1 - smooth((age - hold) / fall));
+  };
+  let p = lvl(c - (COBBLE_AT - PRE_MS), false);
+  for (const e of manual) if (e.kind === 'precursor') p = Math.max(p, lvl(tMs - e.startMs, e.fade ?? true));
+  return p;
 }
 
 export function sample(mill: string, tMs: number, manual: ManualEvent[] = []): Record<SignalId, number> {
@@ -67,6 +87,17 @@ export function sample(mill: string, tMs: number, manual: ManualEvent[] = []): R
   let vib = 2 * (1 + 0.1 * L) + 0.25 * sl(5, 3) + 0.15 * gauss(i, 5);
   vib = Math.abs(vib);
   const temp = 78 + 0.0 * sec + 4 * Math.sin((2 * Math.PI * sec) / 900) + 6 * L + 0.05 * gauss(i, 6);
+
+  // precursor: vibration/torque creep up with chatter, speed sags slightly, current barely moves (NO surge)
+  const P = precursorLevel(mill, tMs, manual);
+  if (P > 0) {
+    const chat = Math.sin(2 * Math.PI * sec * 7); // ~7 Hz roll chatter
+    vib *= 1 + 1.8 * P * (1 + 0.25 * chat);
+    torque *= 1 + 0.16 * P + 0.03 * P * chat;
+    force *= 1 + 0.12 * P + 0.02 * P * chat;
+    speed *= 1 - 0.06 * P * (1 + 0.2 * chat);
+    current *= 1 + 0.1 * P;
+  }
 
   if (age !== null) {
     const on = smooth(age / 0.25);                       // rapid onset (250 ms)

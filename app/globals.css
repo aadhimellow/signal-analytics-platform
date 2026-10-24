@@ -27,7 +27,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:.5rem .6rem;border-botto
 .shake-s{animation:shakeS .12s linear infinite}.shake-h{animation:shakeH .07s linear infinite}
 @keyframes blink{50%{opacity:.35}}.blink{animation:blink .5s steps(2) infinite}
 .phase{display:inline-block;padding:.15rem .6rem;border-radius:999px;font-weight:700;font-size:12px}
-.phase.stable{background:#12331f;color:var(--ok)}.phase.heavy{background:#3d2d0d;color:var(--warn)}.phase.cobble{background:#401820;color:var(--crit)}
+.phase.stable{background:#12331f;color:var(--ok)}.phase.heavy{background:#3d2d0d;color:var(--warn)}.phase.cobble{background:#401820;color:var(--crit)}.phase.precursor{background:#3d2d0d;color:var(--warn)}
 .twinrow{display:grid;grid-template-columns:minmax(340px,520px) 1fr;gap:.9rem;margin-bottom:1rem}
 @media(max-width:900px){.twinrow{grid-template-columns:1fr}}
 /* ---------- scrubber ---------- */
