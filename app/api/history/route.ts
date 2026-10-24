@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   const summary = await q(
     `WITH r AS (
        SELECT ro.signal, ro.avg, ro.min, ro.max, ro.std, ro.n,
-              EXISTS (SELECT 1 FROM alerts a WHERE a.mill_id=ro.mill_id AND ro.bucket BETWEEN a.start_ts - interval '1 second' AND a.end_ts + interval '1 second') AS abnormal
+              EXISTS (SELECT 1 FROM alerts a WHERE a.mill_id=ro.mill_id AND ro.bucket BETWEEN a.start_ts - interval '8 seconds' AND a.end_ts + interval '3 seconds') AS abnormal
        FROM rollup_1s ro WHERE ro.mill_id=$1 AND ro.signal=ANY($2) AND ro.bucket>=$3 AND ro.bucket<$4)
      SELECT signal, abnormal, sum(avg*n)/sum(n) AS mean, sqrt(sum(std*std*n)/sum(n)) AS std, min(min) AS min, max(max) AS max, sum(n)::int AS samples
      FROM r GROUP BY 1,2 ORDER BY 1,2`, [mill, signals, F, T]);

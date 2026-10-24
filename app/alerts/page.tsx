@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import ChatAgent from '@/components/ChatAgent';
 export default function Alerts() {
   const [rows, setRows] = useState<any[]>([]), [mill, setMill] = useState('');
   useEffect(() => { fetch('/api/alerts' + (mill ? `?mill=${mill}` : '')).then((r) => r.json()).then((j) => setRows(j.alerts ?? [])); }, [mill]);
@@ -17,6 +18,7 @@ export default function Alerts() {
               <td>{((new Date(a.end_ts).getTime() - new Date(a.start_ts).getTime()) / 1000).toFixed(1)} s</td><td>{a.signals.join(', ')}</td>
               <td className="muted" style={{ maxWidth: 520 }}>{a.reason}</td><td>{a.status}</td><td><Link href={`/alerts/${a.id}`}>Inspect →</Link></td></tr>))}
         </tbody></table></div>
+      <ChatAgent />
     </>
   );
 }
