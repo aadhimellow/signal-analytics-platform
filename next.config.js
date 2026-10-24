@@ -1,1 +1,1 @@
-module.exports = { reactStrictMode: true, experimental: { serverComponentsExternalPackages: ['pg'] } };
+module.exports = { reactStrictMode: true, experimental: { serverComponentsExternalPackages: ['pg'], outputFileTracingIncludes: { '/api/**/*': ['./db/**/*'] } } };

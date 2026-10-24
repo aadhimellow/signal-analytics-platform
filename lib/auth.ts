@@ -17,10 +17,27 @@ export async function verifyToken(token?: string) {
 }
 export const currentUser = () => verifyToken(cookies().get(COOKIE)?.value);
 
-export async function registerUser(email: string, password: string) {
+export const normalizeCode = (c: unknown) => String(c ?? '').trim().toUpperCase();
+export const CODE_RE = /^[A-Z0-9-]{4,32}$/;
+
+export type RegisterResult = { ok: true; user: { id: number; email: string } } | { ok: false; reason: 'bad_code' | 'email_taken' };
+/**
+ * Creates an account ONLY if `employeeCode` exists in `employees`, is active and has not been used before.
+ * One atomic statement: the code is claimed by the same INSERT that creates the user (users.employee_code is UNIQUE),
+ * so two people cannot claim one code at the same moment, and a failed signup (e.g. email taken) does not burn the code.
+ */
+export async function registerUser(email: string, password: string, employeeCode: string): Promise<RegisterResult> {
   const hash = await bcrypt.hash(password, 10);
-  const rows = await q<{ id: number; email: string }>('INSERT INTO users(email,password_hash) VALUES($1,$2) RETURNING id,email', [email.toLowerCase(), hash]);
-  return rows[0];
+  try {
+    const rows = await q<{ id: number; email: string }>(
+      `INSERT INTO users(email, password_hash, employee_code)
+       SELECT $1, $2, e.employee_code FROM employees e WHERE e.employee_code = $3 AND e.is_active
+       RETURNING id, email`, [email.toLowerCase(), hash, employeeCode]);
+    return rows[0] ? { ok: true, user: rows[0] } : { ok: false, reason: 'bad_code' }; // unknown or deactivated code
+  } catch (e: any) {
+    if (e.code === '23505') return { ok: false, reason: e.constraint === 'users_employee_code_key' ? 'bad_code' : 'email_taken' }; // code already used / email exists
+    throw e;
+  }
 }
 export async function checkLogin(email: string, password: string) {
   const [u] = await q<{ id: number; email: string; password_hash: string }>('SELECT * FROM users WHERE email=$1', [email.toLowerCase()]);

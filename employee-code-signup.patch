@@ -1,0 +1,224 @@
+diff -ruN a/app/api/auth/register/route.ts b/app/api/auth/register/route.ts
+--- a/app/api/auth/register/route.ts	2026-10-24 15:41:01.908735146 +0000
++++ b/app/api/auth/register/route.ts	2026-10-24 15:43:15.863883001 +0000
+@@ -1,12 +1,27 @@
+ import { NextResponse } from 'next/server';
+ import { ensureSchema } from '@/lib/db';
+-import { registerUser, createSession } from '@/lib/auth';
++import { registerUser, createSession, normalizeCode, CODE_RE } from '@/lib/auth';
++
++// Best-effort brute-force guard for employee codes: 8 attempts / 10 min per IP (per server instance).
++const tries = new Map<string, number[]>();
++const tooMany = (ip: string) => { const now = Date.now(), a = (tries.get(ip) ?? []).filter((t) => now - t < 600_000); a.push(now); tries.set(ip, a); return a.length > 8; };
++
++const BAD_CODE = 'That employee code is not valid or has already been used. Please check it or ask your supervisor.';
+ 
+ export async function POST(req: Request) {
++  const ip = (req.headers.get('x-forwarded-for') ?? 'local').split(',')[0].trim();
++  if (tooMany(ip)) return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes and try again.' }, { status: 429 });
+   await ensureSchema();
+-  const { email, password } = await req.json().catch(() => ({}));
++  const { email, password, employeeCode } = await req.json().catch(() => ({}));
++  const code = normalizeCode(employeeCode);
++  if (!code) return NextResponse.json({ error: 'An employee code is required to create an account.' }, { status: 400 });
++  if (!CODE_RE.test(code)) return NextResponse.json({ error: BAD_CODE }, { status: 400 });
+   if (!/^\S+@\S+\.\S+$/.test(email ?? '') || (password ?? '').length < 8)
+     return NextResponse.json({ error: 'Valid email and a password of at least 8 characters are required.' }, { status: 400 });
+-  try { await createSession(await registerUser(email, password)); return NextResponse.json({ ok: true }); }
+-  catch (e: any) { return NextResponse.json({ error: e.code === '23505' ? 'That email is already registered.' : 'Registration failed.' }, { status: 409 }); }
++  const r = await registerUser(email, password, code);
++  if (!r.ok) return r.reason === 'email_taken'
++    ? NextResponse.json({ error: 'That email is already registered.' }, { status: 409 })
++    : NextResponse.json({ error: BAD_CODE }, { status: 403 }); // same message for unknown / inactive / already-used: no hints to guessers
++  await createSession(r.user);
++  return NextResponse.json({ ok: true });
+ }
+diff -ruN a/app/login/page.tsx b/app/login/page.tsx
+--- a/app/login/page.tsx	2026-10-24 15:41:02.249796973 +0000
++++ b/app/login/page.tsx	2026-10-24 15:43:15.864399723 +0000
+@@ -5,10 +5,10 @@
+   const r = useRouter();
+   const [mode, setMode] = useState<'login' | 'register'>('login');
+   const [email, setEmail] = useState('demo@monoedge.dev'), [password, setPassword] = useState('Demo@12345');
+-  const [err, setErr] = useState(''), [busy, setBusy] = useState(false);
++  const [code, setCode] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
+   async function submit(e: React.FormEvent) {
+     e.preventDefault(); setBusy(true); setErr('');
+-    const res = await fetch(`/api/auth/${mode}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) });
++    const res = await fetch(`/api/auth/${mode}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(mode === 'register' ? { email, password, employeeCode: code } : { email, password }) });
+     if (res.ok) { r.push('/'); r.refresh(); } else setErr((await res.json()).error ?? 'Failed');
+     setBusy(false);
+   }
+@@ -19,14 +19,18 @@
+       <form onSubmit={submit}>
+         <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+         <input type="password" placeholder="Password (min 8 chars)" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
++        {mode === 'register' && (<>
++          <input placeholder="Employee code (e.g. EMP-XXXXXX)" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required maxLength={32} autoComplete="off" spellCheck={false} aria-label="Employee code" />
++          <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>Only Mono Edge employees can create an account. Ask your supervisor for your code.</p>
++        </>)}
+         {err && <div className="err">{err}</div>}
+         <button className="primary" style={{ width: '100%' }} disabled={busy}>{mode === 'login' ? 'Sign in' : 'Sign up'}</button>
+       </form>
+       <p className="muted" style={{ marginTop: '1rem' }}>
+         {mode === 'login' ? 'No account? ' : 'Have an account? '}
+-        <a href="#" onClick={(e) => { e.preventDefault(); setMode(mode === 'login' ? 'register' : 'login'); }}>{mode === 'login' ? 'Sign up' : 'Sign in'}</a>
++        <a href="#" onClick={(e) => { e.preventDefault(); setErr(''); setMode(mode === 'login' ? 'register' : 'login'); if (mode === 'login') { setEmail(''); setPassword(''); } else { setEmail('demo@monoedge.dev'); setPassword('Demo@12345'); } }}>{mode === 'login' ? 'Sign up' : 'Sign in'}</a>
+       </p>
+-      <p className="muted" style={{ fontSize: 12 }}>Demo account is pre-filled: demo@monoedge.dev / Demo@12345</p>
++      {mode === 'login' && <p className="muted" style={{ fontSize: 12 }}>Demo account is pre-filled: demo@monoedge.dev / Demo@12345</p>}
+     </div>
+   );
+ }
+diff -ruN a/db/schema.sql b/db/schema.sql
+--- a/db/schema.sql	2026-10-24 15:41:02.384395237 +0000
++++ b/db/schema.sql	2026-10-24 15:43:15.871422507 +0000
+@@ -5,6 +5,25 @@
+   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ 
++-- Employees allowed to create an account. A code is single-use: the account that claims it is linked via users.employee_code.
++CREATE TABLE IF NOT EXISTS employees (
++  employee_code TEXT PRIMARY KEY,
++  full_name     TEXT NOT NULL,
++  department    TEXT,
++  is_active     BOOLEAN NOT NULL DEFAULT TRUE,
++  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
++);
++ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_code TEXT
++  CONSTRAINT users_employee_code_key UNIQUE REFERENCES employees(employee_code);
++
++INSERT INTO employees (employee_code, full_name, department) VALUES
++  ('EMP-27LQJT', 'Asha Menon', 'Operations'),
++  ('EMP-J3V5EM', 'Rahul Nair', 'Maintenance'),
++  ('EMP-CBT4M9', 'Priya Varma', 'Quality Control'),
++  ('EMP-4V3NWC', 'Arjun Das', 'Process Engineering'),
++  ('EMP-XHS2XE', 'Fatima Khan', 'Plant Management')
++ON CONFLICT (employee_code) DO NOTHING;
++
+ -- Raw 20 ms readings. PK doubles as the (mill, signal, time) index and makes ingestion idempotent.
+ CREATE TABLE IF NOT EXISTS readings (
+   mill_id TEXT NOT NULL,
+diff -ruN a/lib/auth.ts b/lib/auth.ts
+--- a/lib/auth.ts	2026-10-24 15:41:02.336082476 +0000
++++ b/lib/auth.ts	2026-10-24 15:43:15.867304168 +0000
+@@ -17,10 +17,27 @@
+ }
+ export const currentUser = () => verifyToken(cookies().get(COOKIE)?.value);
+ 
+-export async function registerUser(email: string, password: string) {
++export const normalizeCode = (c: unknown) => String(c ?? '').trim().toUpperCase();
++export const CODE_RE = /^[A-Z0-9-]{4,32}$/;
++
++export type RegisterResult = { ok: true; user: { id: number; email: string } } | { ok: false; reason: 'bad_code' | 'email_taken' };
++/**
++ * Creates an account ONLY if `employeeCode` exists in `employees`, is active and has not been used before.
++ * One atomic statement: the code is claimed by the same INSERT that creates the user (users.employee_code is UNIQUE),
++ * so two people cannot claim one code at the same moment, and a failed signup (e.g. email taken) does not burn the code.
++ */
++export async function registerUser(email: string, password: string, employeeCode: string): Promise<RegisterResult> {
+   const hash = await bcrypt.hash(password, 10);
+-  const rows = await q<{ id: number; email: string }>('INSERT INTO users(email,password_hash) VALUES($1,$2) RETURNING id,email', [email.toLowerCase(), hash]);
+-  return rows[0];
++  try {
++    const rows = await q<{ id: number; email: string }>(
++      `INSERT INTO users(email, password_hash, employee_code)
++       SELECT $1, $2, e.employee_code FROM employees e WHERE e.employee_code = $3 AND e.is_active
++       RETURNING id, email`, [email.toLowerCase(), hash, employeeCode]);
++    return rows[0] ? { ok: true, user: rows[0] } : { ok: false, reason: 'bad_code' }; // unknown or deactivated code
++  } catch (e: any) {
++    if (e.code === '23505') return { ok: false, reason: e.constraint === 'users_employee_code_key' ? 'bad_code' : 'email_taken' }; // code already used / email exists
++    throw e;
++  }
+ }
+ export async function checkLogin(email: string, password: string) {
+   const [u] = await q<{ id: number; email: string; password_hash: string }>('SELECT * FROM users WHERE email=$1', [email.toLowerCase()]);
+diff -ruN a/next.config.js b/next.config.js
+--- a/next.config.js	2026-10-24 15:41:02.386025584 +0000
++++ b/next.config.js	2026-10-24 15:43:15.872629360 +0000
+@@ -1 +1 @@
+-module.exports = { reactStrictMode: true, experimental: { serverComponentsExternalPackages: ['pg'] } };
++module.exports = { reactStrictMode: true, experimental: { serverComponentsExternalPackages: ['pg'], outputFileTracingIncludes: { '/api/**/*': ['./db/**/*'] } } };
+diff -ruN a/package.json b/package.json
+--- a/package.json	2026-10-24 15:41:02.472735179 +0000
++++ b/package.json	2026-10-24 15:43:15.873710736 +0000
+@@ -8,6 +8,7 @@
+     "start": "next start",
+     "db:init": "tsx scripts/init-db.ts",
+     "seed": "tsx scripts/seed.ts",
++    "employees": "tsx scripts/employees.ts",
+     "simulate": "tsx scripts/simulate.ts",
+     "test": "tsx --test tests/*.test.ts"
+   },
+diff -ruN a/scripts/employees.ts b/scripts/employees.ts
+--- a/scripts/employees.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/scripts/employees.ts	2026-10-24 15:43:15.870194545 +0000
+@@ -0,0 +1,29 @@
++/**
++ * Manage employee codes.
++ *   npm run employees -- list
++ *   npm run employees -- add "Full Name" "Department" [CODE]     (a random code is generated if omitted)
++ *   npm run employees -- deactivate CODE        npm run employees -- activate CODE
++ */
++import './env';
++import { randomInt } from 'node:crypto';
++import { ensureSchema, pool, q } from '../lib/db';
++
++const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
++const gen = () => 'EMP-' + Array.from({ length: 6 }, () => ALPHA[randomInt(ALPHA.length)]).join('');
++
++(async () => {
++  await ensureSchema();
++  const [cmd = 'list', a, b, c] = process.argv.slice(2);
++  if (cmd === 'add') {
++    if (!a) throw new Error('usage: add "Full Name" "Department" [CODE]');
++    const code = (c ?? gen()).toUpperCase();
++    await q('INSERT INTO employees(employee_code, full_name, department) VALUES($1,$2,$3)', [code, a, b ?? null]);
++    console.log(`added ${code} for ${a}`);
++  } else if (cmd === 'deactivate' || cmd === 'activate') {
++    const r = await pool.query('UPDATE employees SET is_active=$2 WHERE employee_code=$1', [a?.toUpperCase(), cmd === 'activate']);
++    console.log(r.rowCount ? `${cmd}d ${a}` : 'no such code');
++  }
++  console.table(await q(`SELECT e.employee_code AS code, e.full_name AS name, e.department, e.is_active AS active, u.email AS used_by
++                         FROM employees e LEFT JOIN users u ON u.employee_code = e.employee_code ORDER BY e.created_at, e.employee_code`));
++  await pool.end();
++})().catch((e) => { console.error(e.message); process.exit(1); });
+diff -ruN a/tests/signup.test.ts b/tests/signup.test.ts
+--- a/tests/signup.test.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/signup.test.ts	2026-10-24 15:43:15.868717804 +0000
+@@ -0,0 +1,35 @@
++import '../scripts/env';
++import test, { after } from 'node:test';
++import assert from 'node:assert/strict';
++import { ensureSchema, pool, q } from '../lib/db';
++import { registerUser, checkLogin, normalizeCode } from '../lib/auth';
++
++after(() => pool.end());
++const skip = !process.env.DATABASE_URL && 'no DATABASE_URL';
++const tag = Date.now().toString(36).toUpperCase();
++const C = (n: number) => `TEST-${tag}-${n}`;
++
++test('signup requires a valid, active, unused employee code', { skip }, async (t) => {
++  await ensureSchema();
++  for (let i = 1; i <= 3; i++) await q('INSERT INTO employees(employee_code, full_name) VALUES($1,$2)', [C(i), 'Test ' + i]);
++  await q('UPDATE employees SET is_active=false WHERE employee_code=$1', [C(3)]);
++  t.after(async () => { await q('DELETE FROM users WHERE email LIKE $1', [`%${tag.toLowerCase()}@test.dev`]); await q('DELETE FROM employees WHERE employee_code LIKE $1', [`TEST-${tag}-%`]); });
++  const em = (n: string) => `${n}${tag.toLowerCase()}@test.dev`;
++
++  assert.deepEqual(await registerUser(em('a'), 'Passw0rd!', 'NOPE-0000'), { ok: false, reason: 'bad_code' });           // unknown
++  assert.deepEqual(await registerUser(em('b'), 'Passw0rd!', C(3)), { ok: false, reason: 'bad_code' });                  // deactivated
++  const ok = await registerUser(em('c'), 'Passw0rd!', C(1)); assert.equal(ok.ok, true);                                  // valid
++  assert.deepEqual(await registerUser(em('d'), 'Passw0rd!', C(1)), { ok: false, reason: 'bad_code' });                  // already used
++  assert.deepEqual(await registerUser(em('c'), 'Passw0rd!', C(2)), { ok: false, reason: 'email_taken' });               // email taken ...
++  assert.equal((await registerUser(em('e'), 'Passw0rd!', C(2))).ok, true);                                              // ... and C(2) was NOT burned
++  assert.ok(await checkLogin(em('c'), 'Passw0rd!'));
++  const [{ n }] = await q<{ n: number }>('SELECT count(*)::int n FROM users WHERE employee_code=$1', [C(1)]); assert.equal(n, 1);
++});
++test('concurrent signups with the same code: exactly one wins', { skip }, async (t) => {
++  await ensureSchema(); const code = C(9);
++  await q('INSERT INTO employees(employee_code, full_name) VALUES($1,$2)', [code, 'Race']);
++  t.after(async () => { await q('DELETE FROM users WHERE email LIKE $1', [`race%${tag.toLowerCase()}@test.dev`]); await q('DELETE FROM employees WHERE employee_code=$1', [code]); });
++  const rs = await Promise.all(Array.from({ length: 6 }, (_, i) => registerUser(`race${i}${tag.toLowerCase()}@test.dev`, 'Passw0rd!', code)));
++  assert.equal(rs.filter((r) => r.ok).length, 1);
++});
++test('codes are normalised', () => { assert.equal(normalizeCode('  emp-ab12 '), 'EMP-AB12'); });
