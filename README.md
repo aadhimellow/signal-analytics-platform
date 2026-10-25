@@ -6,16 +6,16 @@ A full-stack platform that turns **20 ms (50 Hz) rolling-mill PLC signals** into
 |---|---|
 | **Live app** | `<LIVE_URL>` |
 | **Source** | `<REPO_URL>` |
-| **Demo login** | `demo@monoedge.dev` / `Demo@12345` |
+| **Demo login** | Credentials shared in the mail |
 | **Stack** | Next.js 14 (App Router, TypeScript) · PostgreSQL (Neon) · JWT-cookie auth · Recharts · Vercel |
 
 ---
 
-## 1. Reviewer quick start (about 5 minutes)
+## 1. Reviewer quick start (Time taken ~ 5 minutes)
 
-> **Note on the live stream:** the virtual PLC runs *inside the server and advances while someone has the dashboard open* (this is what lets it work on Vercel, which has no background worker). If nobody looked for a while you will see a gap in history, exactly like a real data outage. Open **Live** and give it a few seconds.
+> **Note on the live stream:** the virtual PLC runs *inside the server and advances while someone has the dashboard open* (this is what lets it work on Vercel since there is no background worker). If nobody looked for a while you will see a gap in history, exactly like a real data outage. Open **Live** and give it a few seconds.
 
-1. **Sign in** with the demo account. (Creating a new account requires an **employee code**; use the demo login or the single-use code `<REVIEWER_CODE>`.)
+1. **Sign in** with the demo account. (Creating a new account requires an **employee code** which is shared in the mail; use the demo login or the single-use code.)
 2. **Live** — digital twin of the stand, status badge, six live signals. Switch between mills **RM-01 / RM-02**.
 3. Click **Precursor → cobble**. After ~7 s the twin turns amber (*roll slip / chatter*) and an **early-warning alert** appears; at ~15 s the twin buckles red and a **critical cobble alert** follows. The cobble alert states how many seconds of notice the warning gave.
    - **Inject precursor** = a near miss: one warning, no cobble. **Inject cobble** = a sudden jam with no warning.
@@ -31,7 +31,7 @@ A full-stack platform that turns **20 ms (50 Hz) rolling-mill PLC signals** into
 
 | # | Requirement from the brief | How it is met | Where |
 |---|---|---|---|
-| 01 | **Authentication**, app only for authenticated users | Sign-up / sign-in with bcrypt-hashed passwords and an `httpOnly` JWT session cookie. Middleware rejects every page and API call without a valid session (except `/login`, `/api/auth/*` and the key-protected `/api/ingest`). Sign-up additionally requires a valid **employee code** (§3). | `middleware.ts`, `lib/auth.ts`, `app/api/auth/*` |
+| 01 | **Authentication**, app only for authenticated users | Sign-up / sign-in with bcrypt-hashed passwords and an `httpOnly` JWT session cookie. Middleware rejects every page and API call without a valid session (except `/login`, `/api/auth/*` and the key-protected `/api/ingest`). Sign-up additionally requires a valid **employee code** so that no one else other than employees wont be able to create an account(§3). | `middleware.ts`, `lib/auth.ts`, `app/api/auth/*` |
 | 02 | **Signal generation & ingestion**: 20 ms readings, time-series stream, persisted | Deterministic virtual PLC (6 signals × 2 mills at 20 ms). Three producers share one pipeline: embedded lazy simulator, external simulator over HTTP, history replay. Bulk, **idempotent** inserts into Postgres, plus 1 s rollups. | `lib/simulator.ts`, `lib/engine.ts`, `app/api/ingest/route.ts`, `scripts/simulate.ts` |
 | 03 | **Live dashboard**: status, live charts, select mill and signal | Polls `/api/live` every second; status badge (NORMAL / WARNING / ALARM / STALE), KPI cards, per-signal charts (50 Hz source downsampled to 250 ms buckets), mill and window selectors, signal toggles, alert shading. | `app/page.tsx`, `app/api/live/route.ts` |
 | 04 | **Historical analytics** by signal and time range; compare normal vs abnormal | Mill / signal / time-range picker with presets. ≤ 2 min served from raw 20 ms data, longer ranges from 1 s rollups (up to 7 days). **Normal-vs-abnormal summary table** (mean ± σ, max, shift) and alerts in range. | `app/history/page.tsx`, `app/api/history/route.ts` |
@@ -54,6 +54,7 @@ Features that go past what the assessment asked for:
   - **With a key:** Google Gemini function calling over five read-only, parameterised query tools (the model never writes SQL).
   - **Without a key (or if the AI service fails):** a built-in rule-based answerer uses the same tools, so the chat always works.
   - Per-user rate limit, input limits, login required, key kept server-side.
+  - The chat agent initially starts in **LLM MODE** if the key is present and will switch to **RULE MODE** if any error occurs.
 - **Employee-code gated sign-up.** Accounts can only be created with a code from the `employees` table. Codes are **single-use** and claimed *atomically* by the same SQL statement that creates the account (a failed sign-up does not burn the code; 6 simultaneous attempts → exactly one wins). Unknown / used / inactive codes all return one generic message, with an IP attempt limit. Manage codes with `npm run employees`.
 - **Signed-in user shown in the navigation bar.**
 - **Storage design:** raw 20 ms data + 1 s rollups, retention that keeps ±60 s around every alert, idempotent ingestion (replays never duplicate rows or alerts).
