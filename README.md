@@ -4,8 +4,8 @@ A full-stack platform that turns **20 ms (50 Hz) rolling-mill PLC signals** into
 
 | | |
 |---|---|
-| **Live app** | `<LIVE_URL>` |
-| **Source** | `<REPO_URL>` |
+| **Live app** | `https://mono-edge-signals.vercel.app/` |
+| **Source** | `https://github.com/aadhimellow/signal-analytics-platform` |
 | **Demo login** | Credentials shared in the mail |
 | **Stack** | Next.js 14 (App Router, TypeScript) · PostgreSQL (Neon) · JWT-cookie auth · Recharts · Vercel |
 
